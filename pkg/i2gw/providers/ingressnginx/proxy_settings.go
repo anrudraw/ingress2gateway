@@ -18,7 +18,6 @@ package ingressnginx
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/intermediate"
@@ -201,37 +200,4 @@ func findHTTPRouteKey(ir *intermediate.IR, ingressKey types.NamespacedName) type
 		}
 	}
 	return types.NamespacedName{}
-}
-
-// ParseBodySize parses a body size string like "100m" or "1g" and returns bytes
-func ParseBodySize(size string) (int64, error) {
-	if size == "" || size == "0" {
-		return 0, nil
-	}
-
-	size = strings.ToLower(strings.TrimSpace(size))
-	
-	var multiplier int64 = 1
-	var numStr string
-
-	switch {
-	case strings.HasSuffix(size, "g"):
-		multiplier = 1024 * 1024 * 1024
-		numStr = strings.TrimSuffix(size, "g")
-	case strings.HasSuffix(size, "m"):
-		multiplier = 1024 * 1024
-		numStr = strings.TrimSuffix(size, "m")
-	case strings.HasSuffix(size, "k"):
-		multiplier = 1024
-		numStr = strings.TrimSuffix(size, "k")
-	default:
-		numStr = size
-	}
-
-	num, err := strconv.ParseInt(numStr, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid body size: %s", size)
-	}
-
-	return num * multiplier, nil
 }

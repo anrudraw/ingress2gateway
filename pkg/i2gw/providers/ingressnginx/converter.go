@@ -40,6 +40,8 @@ func newResourcesToIRConverter() *resourcesToIRConverter {
 			rateLimitFeature,
 			clientCertAuthFeature,
 			externalAuthFeature,
+			envoyFilterFeature,
+			appLevelWarningsFeature,
 		},
 	}
 }
