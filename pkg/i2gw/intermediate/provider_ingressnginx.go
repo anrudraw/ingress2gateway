@@ -41,6 +41,54 @@ type IngressNginxHTTPRouteIR struct {
 
 	// RateLimitBurst is the burst limit for rate limiting
 	RateLimitBurst int
+
+	// ClientCertAuth holds client certificate authentication configuration
+	ClientCertAuth *ClientCertAuthConfig
+
+	// ExternalAuth holds external authentication configuration
+	ExternalAuth *ExternalAuthConfig
+}
+
+// ClientCertAuthConfig holds client certificate authentication settings
+type ClientCertAuthConfig struct {
+	// Secret is the name of the secret containing the CA certificate
+	Secret string
+
+	// VerifyClient specifies how client certificates are verified (on, off, optional, optional_no_ca)
+	VerifyClient string
+
+	// VerifyDepth is the maximum depth of certificate chain verification
+	VerifyDepth int
+
+	// ErrorPage is the URL to redirect to when client cert verification fails
+	ErrorPage string
+
+	// PassCertToUpstream indicates if client certificate should be passed to backend
+	PassCertToUpstream bool
+}
+
+// ExternalAuthConfig holds external authentication settings
+type ExternalAuthConfig struct {
+	// URL is the external authentication service URL
+	URL string
+
+	// Method is the HTTP method to use for auth requests
+	Method string
+
+	// SigninURL is the URL to redirect unauthenticated requests to
+	SigninURL string
+
+	// ResponseHeaders are headers to copy from auth response to request
+	ResponseHeaders []string
+
+	// RequestRedirect is the URL to redirect after auth
+	RequestRedirect string
+
+	// CacheKey is the cache key for auth responses
+	CacheKey string
+
+	// CacheDuration is how long to cache auth responses
+	CacheDuration string
 }
 
 // IngressNginxServiceIR holds ingress-nginx specific Service configuration

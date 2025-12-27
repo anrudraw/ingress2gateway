@@ -36,6 +36,10 @@ func newResourcesToIRConverter() *resourcesToIRConverter {
 			backendProtocolFeature,
 			timeoutFeature,
 			sslRedirectFeature,
+			proxySettingsFeature,
+			rateLimitFeature,
+			clientCertAuthFeature,
+			externalAuthFeature,
 		},
 	}
 }
