@@ -2,9 +2,94 @@
 
 The project supports translating ingress-nginx specific annotations.
 
-**Ingress class name**
+## Provider-Specific Flags
 
-To specify the name of the Ingress class to select, use `--ingress-nginx-ingress-class=ingress-nginx` (default to 'nginx').
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--ingress-nginx-ingress-class` | `nginx` | The name of the Ingress class to select |
+| `--ingress-nginx-gateway-mode` | `per-namespace` | Gateway deployment mode: `per-namespace` or `centralized` |
+| `--ingress-nginx-gateway-namespace` | `istio-system` | Namespace for centralized gateway (only used when mode=centralized) |
+| `--ingress-nginx-gateway-name` | `platform-gateway` | Name of centralized gateway (only used when mode=centralized) |
+
+## Gateway Deployment Modes
+
+### Per-Namespace Mode (Default)
+
+Creates a dedicated gateway namespace for each service namespace. This provides clear ownership boundaries between platform and service teams.
+
+```bash
+# Convert ingresses from fhir namespace
+ingress2gateway print --providers ingress-nginx --namespace fhir
+```
+
+**Result:**
+```
+fhir-gateway/                    # NEW - Platform team owned
+├── Gateway: fhir-gateway
+├── ReferenceGrant: allow-routes-from-fhir
+└── EnvoyFilters (if applicable)
+
+fhir/                            # Service team owned (unchanged)
+├── HTTPRoute                    # Converted from Ingress
+├── BackendTLSPolicy            # For backend-protocol: HTTPS
+├── Services
+└── Deployments
+```
+
+| Service Namespace | Gateway Namespace | Gateway Name |
+|-------------------|-------------------|--------------|
+| `fhir` | `fhir-gateway` | `fhir-gateway` |
+| `dicom` | `dicom-gateway` | `dicom-gateway` |
+| `hms` | `hms-gateway` | `hms-gateway` |
+
+### Centralized Mode
+
+Creates a single shared gateway in a platform namespace (e.g., `istio-system`).
+
+```bash
+ingress2gateway print --providers ingress-nginx \
+  --ingress-nginx-gateway-mode=centralized \
+  --ingress-nginx-gateway-namespace=istio-system \
+  --ingress-nginx-gateway-name=platform-gateway \
+  --all-namespaces
+```
+
+**Result:**
+```
+istio-system/                    # Platform team owned
+├── Gateway: platform-gateway
+├── ReferenceGrant: allow-routes-from-fhir
+├── ReferenceGrant: allow-routes-from-dicom
+└── EnvoyFilters
+
+fhir/
+├── HTTPRoute → parentRefs: istio-system/platform-gateway
+└── ...
+
+dicom/
+├── HTTPRoute → parentRefs: istio-system/platform-gateway
+└── ...
+```
+
+## Istio-Specific Features
+
+When using Istio as the Gateway API implementation, the provider generates additional resources:
+
+### EnvoyFilters
+
+For annotations that require Envoy-level configuration, Istio EnvoyFilters are generated:
+
+| Annotation | EnvoyFilter Type | Description |
+|------------|-----------------|-------------|
+| `nginx.ingress.kubernetes.io/limit-rps` | `local_ratelimit` | Request rate limiting |
+| `nginx.ingress.kubernetes.io/proxy-body-size` | `buffer` | Max request body size |
+| `nginx.ingress.kubernetes.io/proxy-buffering: "off"` | `circuit_breakers` | Disable buffering |
+
+EnvoyFilters are placed in the gateway namespace and target the appropriate Gateway using `targetRefs`.
+
+### ReferenceGrants
+
+ReferenceGrants are automatically generated to allow HTTPRoutes in service namespaces to reference Gateways in gateway namespaces. This is required by Gateway API for cross-namespace references.
 
 ## Supported Annotations
 
@@ -190,6 +275,26 @@ spec:
       headersToBackend:
         - Authorization
 ```
+
+## Annotations Requiring App-Level Changes
+
+The following annotations **cannot be translated** to Gateway API and require changes in your application code. The tool will emit warnings when these are detected:
+
+| Annotation | Issue | Recommended Action |
+|------------|-------|-------------------|
+| `nginx.ingress.kubernetes.io/server-snippet` | Custom NGINX config has no Gateway API equivalent | Move logic to application middleware |
+| `nginx.ingress.kubernetes.io/configuration-snippet` | Custom location config | Move to application or use EnvoyPatchPolicy |
+| `nginx.ingress.kubernetes.io/use-regex` | Regex path matching is NOT GA in Gateway API | Refactor API paths to use prefix matching, or use experimental channel |
+| `nginx.ingress.kubernetes.io/rewrite-target` (with `$1`, `$2`) | URLRewrite filter doesn't support capture groups | Refactor application to accept original paths |
+
+### Meshless Istio Warnings
+
+When using Istio without sidecars (meshless), these annotations have limitations:
+
+| Annotation | Limitation | Options |
+|------------|-----------|---------|
+| `nginx.ingress.kubernetes.io/auth-url` | External auth applies to entire Gateway, not per-route | Implement auth in application, or enable Istio sidecars |
+| `nginx.ingress.kubernetes.io/auth-tls-secret` | Client cert validation applies to entire listener | Use separate listeners per customer, or validate in application |
 
 ## Annotations Not Yet Supported
 
