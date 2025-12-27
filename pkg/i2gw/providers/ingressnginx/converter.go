@@ -33,6 +33,9 @@ func newResourcesToIRConverter() *resourcesToIRConverter {
 	return &resourcesToIRConverter{
 		featureParsers: []i2gw.FeatureParser{
 			canaryFeature,
+			backendProtocolFeature,
+			timeoutFeature,
+			sslRedirectFeature,
 		},
 	}
 }
