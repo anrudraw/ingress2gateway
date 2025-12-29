@@ -126,8 +126,10 @@ func proxySettingsFeature(ingresses []networkingv1.Ingress, _ map[types.Namespac
 					svcCtx.IngressNginx.LoadBalanceAlgorithm = lbAlgorithm
 					ir.Services[svcKey] = svcCtx
 
-					notify(notifications.InfoNotification,
-						fmt.Sprintf("load-balance '%s' stored in IR for service %s. Requires BackendTrafficPolicy to apply.", lbAlgorithm, svcKey.Name),
+					notify(notifications.WarningNotification,
+						fmt.Sprintf("load-balance '%s' requires manual configuration for service %s.\n"+
+							"For Istio: Create DestinationRule with trafficPolicy.loadBalancer.simple: LEAST_REQUEST\n"+
+							"For Envoy Gateway: Create BackendTrafficPolicy with loadBalancer settings", lbAlgorithm, svcKey.Name),
 						&ing,
 					)
 				}
