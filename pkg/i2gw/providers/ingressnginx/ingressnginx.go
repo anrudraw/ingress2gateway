@@ -22,8 +22,11 @@ import (
 
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw"
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/intermediate"
+	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/notifications"
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/providers/common"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 // The Name of the provider.
@@ -156,6 +159,12 @@ func (p *Provider) ToGatewayResources(ir intermediate.IR) (i2gw.GatewayResources
 		return i2gw.GatewayResources{}, errs
 	}
 	
+	// Transform Gateways based on gateway mode
+	p.transformGatewaysForMode(&gatewayResources, ir)
+	
+	// Generate SSL redirect HTTPRoutes
+	buildSSLRedirectRoutes(ir, &gatewayResources, p.gatewayConfig)
+	
 	// Build Istio EnvoyFilters for implementation-specific features
 	buildIstioEnvoyFilters(ir, &gatewayResources, p.gatewayConfig)
 	
@@ -163,7 +172,149 @@ func (p *Provider) ToGatewayResources(ir intermediate.IR) (i2gw.GatewayResources
 	// Always needed since Gateways are in istio-system and HTTPRoutes are in service namespaces
 	buildCrossNamespaceReferenceGrants(ir, &gatewayResources, p.gatewayConfig)
 	
+	// Emit centralized mode warnings for auth annotations
+	p.emitCentralizedModeWarnings(ir)
+	
 	return gatewayResources, nil
+}
+
+// emitCentralizedModeWarnings emits warnings for auth annotations when using centralized gateway mode
+// In centralized mode, auth EnvoyFilters apply to the shared platform Gateway affecting ALL services
+func (p *Provider) emitCentralizedModeWarnings(ir intermediate.IR) {
+	if !p.gatewayConfig.IsCentralized() {
+		return // No warnings needed for per-namespace mode
+	}
+	
+	for _, routeCtx := range ir.HTTPRoutes {
+		if routeCtx.ProviderSpecificIR.IngressNginx == nil {
+			continue
+		}
+		
+		nginxIR := routeCtx.ProviderSpecificIR.IngressNginx
+		
+		// Warn about external auth in centralized mode
+		if nginxIR.ExternalAuth != nil && nginxIR.ExternalAuth.URL != "" {
+			notify(notifications.WarningNotification,
+				"CENTRALIZED MODE WARNING - auth-url: The ext_authz EnvoyFilter targets the shared platform Gateway "+
+					"and will apply to ALL services, not just this one. Consider: "+
+					"1) Switch to per-namespace mode (--ingress-nginx-gateway-mode=per-namespace) for namespace isolation, or "+
+					"2) Implement auth at the application level for fine-grained control.",
+				&routeCtx.HTTPRoute,
+			)
+		}
+		
+		// Warn about client cert auth in centralized mode
+		if nginxIR.ClientCertAuth != nil && nginxIR.ClientCertAuth.Secret != "" {
+			notify(notifications.WarningNotification,
+				"CENTRALIZED MODE WARNING - auth-tls-secret: Client cert validation on the shared platform Gateway "+
+					"applies to ALL services on that listener. Consider: "+
+					"1) Switch to per-namespace mode for dedicated Gateway listeners, or "+
+					"2) Pass client cert to app and validate there (auth-tls-pass-certificate-to-upstream).",
+				&routeCtx.HTTPRoute,
+			)
+		}
+	}
+}
+
+// transformGatewaysForMode transforms the generated Gateways based on the gateway mode.
+// In per-namespace mode, each service namespace gets its own Gateway in a dedicated gateway namespace.
+// In centralized mode, all routes use a single platform Gateway.
+func (p *Provider) transformGatewaysForMode(gatewayResources *i2gw.GatewayResources, ir intermediate.IR) {
+	if p.gatewayConfig.Mode == "centralized" {
+		// For centralized mode, update Gateway to use the configured namespace/name
+		newGateways := make(map[types.NamespacedName]gatewayv1.Gateway)
+		for oldKey, gw := range gatewayResources.Gateways {
+			// Create new gateway with centralized naming
+			newKey := types.NamespacedName{
+				Namespace: p.gatewayConfig.Namespace,
+				Name:      p.gatewayConfig.Name,
+			}
+			gw.Namespace = p.gatewayConfig.Namespace
+			gw.Name = p.gatewayConfig.Name
+			// Use istio as the gateway class for Istio deployments
+			istioClass := gatewayv1.ObjectName("istio")
+			gw.Spec.GatewayClassName = istioClass
+			newGateways[newKey] = gw
+			
+			// Update HTTPRoutes to reference the new gateway
+			p.updateHTTPRouteParentRefs(gatewayResources, oldKey, newKey)
+		}
+		gatewayResources.Gateways = newGateways
+		return
+	}
+	
+	// Per-namespace mode (default): Create dedicated gateway namespaces
+	// Group HTTPRoutes by their source namespace
+	namespaceRoutes := make(map[string][]types.NamespacedName)
+	for routeKey := range gatewayResources.HTTPRoutes {
+		namespaceRoutes[routeKey.Namespace] = append(namespaceRoutes[routeKey.Namespace], routeKey)
+	}
+	
+	// Create a new Gateway for each namespace that has routes
+	newGateways := make(map[types.NamespacedName]gatewayv1.Gateway)
+	oldToNewGateway := make(map[types.NamespacedName]types.NamespacedName)
+	
+	for namespace := range namespaceRoutes {
+		// Get the gateway reference for this namespace
+		gwNamespace, gwName := p.gatewayConfig.GetGatewayRef(namespace)
+		newKey := types.NamespacedName{
+			Namespace: gwNamespace,
+			Name:      gwName,
+		}
+		
+		// Find an existing gateway to use as template (take listeners from all gateways)
+		var templateGateway *gatewayv1.Gateway
+		for oldKey, gw := range gatewayResources.Gateways {
+			if templateGateway == nil {
+				gwCopy := gw.DeepCopy()
+				templateGateway = gwCopy
+				oldToNewGateway[oldKey] = newKey
+			} else {
+				// Merge listeners from other gateways
+				templateGateway.Spec.Listeners = append(templateGateway.Spec.Listeners, gw.Spec.Listeners...)
+				oldToNewGateway[oldKey] = newKey
+			}
+		}
+		
+		if templateGateway != nil {
+			// Update the gateway with per-namespace naming
+			templateGateway.Namespace = gwNamespace
+			templateGateway.Name = gwName
+			// Use istio as the gateway class for Istio deployments
+			istioClass := gatewayv1.ObjectName("istio")
+			templateGateway.Spec.GatewayClassName = istioClass
+			newGateways[newKey] = *templateGateway
+		}
+	}
+	
+	// Update HTTPRoutes to reference the new gateways
+	for oldKey, newKey := range oldToNewGateway {
+		p.updateHTTPRouteParentRefs(gatewayResources, oldKey, newKey)
+	}
+	
+	gatewayResources.Gateways = newGateways
+}
+
+// updateHTTPRouteParentRefs updates HTTPRoute parentRefs from old gateway to new gateway
+func (p *Provider) updateHTTPRouteParentRefs(gatewayResources *i2gw.GatewayResources, oldGw, newGw types.NamespacedName) {
+	for routeKey, route := range gatewayResources.HTTPRoutes {
+		updated := false
+		for i, parentRef := range route.Spec.ParentRefs {
+			parentNs := route.Namespace
+			if parentRef.Namespace != nil {
+				parentNs = string(*parentRef.Namespace)
+			}
+			if parentNs == oldGw.Namespace && string(parentRef.Name) == oldGw.Name {
+				newNs := gatewayv1.Namespace(newGw.Namespace)
+				route.Spec.ParentRefs[i].Namespace = &newNs
+				route.Spec.ParentRefs[i].Name = gatewayv1.ObjectName(newGw.Name)
+				updated = true
+			}
+		}
+		if updated {
+			gatewayResources.HTTPRoutes[routeKey] = route
+		}
+	}
 }
 
 func (p *Provider) ReadResourcesFromCluster(ctx context.Context) error {

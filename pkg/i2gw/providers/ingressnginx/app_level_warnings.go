@@ -65,24 +65,26 @@ Simple rewrites (without capture groups) can use HTTPRoute URLRewrite filter.`,
 }
 
 // Annotations that require special handling in meshless Istio
+// NOTE: In per-namespace mode, these are handled automatically:
+// - auth-url: EnvoyFilter with ext_authz is generated, scoped to namespace Gateway
+// - auth-tls-secret: Can be configured on per-namespace Gateway listener
 var meshlessWarningAnnotations = map[string]string{
 	"nginx.ingress.kubernetes.io/auth-url": `
-EXTERNAL AUTH IN MESHLESS ISTIO:
-With meshless Istio (no sidecars), external auth cannot be applied per-service.
-Options:
-1. GATEWAY-LEVEL: Configure ext_authz on the Gateway (applies to all routes)
-2. APP-LEVEL: Implement auth check in your application (recommended for per-route control)
-3. ADD MESH: Enable Istio sidecars for this service to use AuthorizationPolicy
-EnvoyFilter for Gateway-level auth has been generated, but consider app-level auth for fine-grained control.`,
+EXTERNAL AUTH CONFIGURATION:
+An ext_authz EnvoyFilter has been generated targeting your namespace Gateway.
+In PER-NAMESPACE mode: This is namespace-scoped and applies only to your service's Gateway.
+In CENTRALIZED mode: This applies to the shared platform Gateway (affects all routes).
+Review the generated EnvoyFilter and adjust the auth service cluster configuration as needed.
+Consider app-level auth for fine-grained per-route control.`,
 
 	"nginx.ingress.kubernetes.io/auth-tls-secret": `
-CLIENT CERT AUTH IN MESHLESS ISTIO:
-With per-namespace Gateways, client cert validation can be configured on the Gateway listener.
-However, this applies to ALL routes on that listener.
-For per-customer client cert validation:
-1. SEPARATE LISTENERS: Create separate Gateway listeners per customer
-2. APP-LEVEL: Pass client cert to app and validate there (auth-tls-pass-certificate-to-upstream)
-3. ADD MESH: Enable sidecars to use PeerAuthentication per-service`,
+CLIENT CERT AUTH CONFIGURATION:
+In PER-NAMESPACE mode: Configure client cert validation on your namespace Gateway listener.
+  The Gateway in <namespace>-gateway can have dedicated TLS settings.
+In CENTRALIZED mode: Client cert validation on shared Gateway affects all services.
+For per-customer client certs, consider:
+1. SEPARATE LISTENERS: Create separate Gateway listeners with different client CA certs
+2. APP-LEVEL: Pass client cert to app (auth-tls-pass-certificate-to-upstream) and validate there`,
 }
 
 // appLevelWarningsFeature checks for annotations that require app-level changes
@@ -107,11 +109,11 @@ func appLevelWarningsFeature(ingresses []networkingv1.Ingress, _ map[types.Names
 			}
 		}
 
-		// Check for meshless-specific warnings
+		// Check for meshless-specific warnings (now INFO since we generate EnvoyFilters)
 		for annotation, warningMsg := range meshlessWarningAnnotations {
 			if _, exists := annotations[annotation]; exists {
-				notify(notifications.WarningNotification,
-					fmt.Sprintf("MESHLESS ISTIO LIMITATION - %s\n%s",
+				notify(notifications.InfoNotification,
+					fmt.Sprintf("AUTH CONFIG GENERATED - %s\n%s",
 						annotation, strings.TrimSpace(warningMsg)),
 					&ing,
 				)

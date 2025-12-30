@@ -91,7 +91,24 @@ func convertObjectsToStr(ob []client.Object) string {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
-		object := o.GetObjectKind().GroupVersionKind().Kind + ": " + client.ObjectKeyFromObject(o).String()
+		if o == nil {
+			sb.WriteString("(unknown)")
+			continue
+		}
+		kind := o.GetObjectKind().GroupVersionKind().Kind
+		if kind == "" {
+			// When objects are read from the cluster, TypeMeta is not populated
+			// Use reflection to get the type name
+			kind = fmt.Sprintf("%T", o)
+			// Clean up the pointer prefix and package path
+			if strings.HasPrefix(kind, "*") {
+				kind = kind[1:]
+			}
+			if idx := strings.LastIndex(kind, "."); idx >= 0 {
+				kind = kind[idx+1:]
+			}
+		}
+		object := kind + ": " + client.ObjectKeyFromObject(o).String()
 		sb.WriteString(object)
 	}
 

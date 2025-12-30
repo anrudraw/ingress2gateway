@@ -62,6 +62,10 @@ func buildCrossNamespaceReferenceGrants(ir intermediate.IR, gatewayResources *i2
 		}
 
 		grant := gatewayv1beta1.ReferenceGrant{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: "gateway.networking.k8s.io/v1beta1",
+				Kind:       "ReferenceGrant",
+			},
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      grantKey.Name,
 				Namespace: grantKey.Namespace,

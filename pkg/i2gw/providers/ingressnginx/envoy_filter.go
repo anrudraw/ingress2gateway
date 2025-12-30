@@ -62,9 +62,8 @@ func envoyFilterFeature(ingresses []networkingv1.Ingress, _ map[types.Namespaced
 
 		if hasEnvoyConfig {
 			notify(notifications.InfoNotification,
-				fmt.Sprintf("EnvoyFilter will be generated for: %s (targets %s-gateway)",
-					strings.Join(details, ", "),
-					ing.Namespace),
+				fmt.Sprintf("EnvoyFilter will be generated for: %s (see --ingress-nginx-gateway-mode flag for targeting)",
+					strings.Join(details, ", ")),
 				&ing,
 			)
 		}
@@ -157,6 +156,21 @@ func (g *EnvoyFilterGenerator) GenerateEnvoyFilters(ir intermediate.IR) map[type
 				filterKey,
 				gwNamespace,
 				gwName,
+			)
+		}
+
+		// Generate ext_authz EnvoyFilter if configured (per-namespace mode only)
+		// In per-namespace mode, the Gateway is namespace-scoped so ext_authz applies only to that namespace
+		if nginxIR.ExternalAuth != nil && nginxIR.ExternalAuth.URL != "" {
+			filterKey := types.NamespacedName{
+				Namespace: filterNamespace,
+				Name:      fmt.Sprintf("%s-%s-extauthz", routeKey.Namespace, routeKey.Name),
+			}
+			filters[filterKey] = g.buildExtAuthzEnvoyFilter(
+				filterKey,
+				gwNamespace,
+				gwName,
+				nginxIR.ExternalAuth,
 			)
 		}
 	}
@@ -402,6 +416,113 @@ func (g *EnvoyFilterGenerator) buildNoBufferingEnvoyFilter(
 											"max_requests":         100000,
 										},
 									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	return filter
+}
+
+// buildExtAuthzEnvoyFilter creates an EnvoyFilter for external authorization
+// This is generated in per-namespace mode where the Gateway is namespace-scoped
+func (g *EnvoyFilterGenerator) buildExtAuthzEnvoyFilter(
+	key types.NamespacedName,
+	gatewayNamespace string,
+	gatewayName string,
+	authConfig *intermediate.ExternalAuthConfig,
+) *unstructured.Unstructured {
+
+	// Build headers to pass to auth service
+	headersToUpstream := []interface{}{}
+	for _, header := range authConfig.ResponseHeaders {
+		headersToUpstream = append(headersToUpstream, map[string]interface{}{
+			"exact_match": header,
+		})
+	}
+
+	// Default headers if none specified
+	if len(headersToUpstream) == 0 {
+		headersToUpstream = []interface{}{
+			map[string]interface{}{"exact_match": "authorization"},
+			map[string]interface{}{"exact_match": "x-forwarded-user"},
+			map[string]interface{}{"exact_match": "x-forwarded-email"},
+		}
+	}
+
+	filter := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "networking.istio.io/v1alpha3",
+			"kind":       "EnvoyFilter",
+			"metadata": map[string]interface{}{
+				"name":      key.Name,
+				"namespace": key.Namespace,
+				"labels": map[string]interface{}{
+					"app.kubernetes.io/managed-by": "ingress2gateway",
+					"gateway-api-migration":        "true",
+				},
+				"annotations": map[string]interface{}{
+					"ingress2gateway.kubernetes.io/source":   "nginx.ingress.kubernetes.io/auth-url",
+					"ingress2gateway.kubernetes.io/auth-url": authConfig.URL,
+				},
+			},
+			"spec": map[string]interface{}{
+				"targetRefs": []interface{}{
+					map[string]interface{}{
+						"kind":      "Gateway",
+						"group":     "gateway.networking.k8s.io",
+						"name":      gatewayName,
+						"namespace": gatewayNamespace,
+					},
+				},
+				"configPatches": []interface{}{
+					map[string]interface{}{
+						"applyTo": "HTTP_FILTER",
+						"match": map[string]interface{}{
+							"context": "GATEWAY",
+							"listener": map[string]interface{}{
+								"filterChain": map[string]interface{}{
+									"filter": map[string]interface{}{
+										"name": "envoy.filters.network.http_connection_manager",
+										"subFilter": map[string]interface{}{
+											"name": "envoy.filters.http.router",
+										},
+									},
+								},
+							},
+						},
+						"patch": map[string]interface{}{
+							"operation": "INSERT_BEFORE",
+							"value": map[string]interface{}{
+								"name": "envoy.filters.http.ext_authz",
+								"typed_config": map[string]interface{}{
+									"@type": "type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz",
+									"http_service": map[string]interface{}{
+										"server_uri": map[string]interface{}{
+											"uri":     authConfig.URL,
+											"cluster": "outbound|80||ext-authz-service", // This may need adjustment based on actual service
+											"timeout": "5s",
+										},
+										"authorization_request": map[string]interface{}{
+											"allowed_headers": map[string]interface{}{
+												"patterns": []interface{}{
+													map[string]interface{}{"exact": "authorization"},
+													map[string]interface{}{"exact": "cookie"},
+													map[string]interface{}{"prefix": "x-"},
+												},
+											},
+										},
+										"authorization_response": map[string]interface{}{
+											"allowed_upstream_headers": map[string]interface{}{
+												"patterns": headersToUpstream,
+											},
+										},
+									},
+									"failure_mode_allow": false,
 								},
 							},
 						},
