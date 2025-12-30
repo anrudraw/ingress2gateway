@@ -4,6 +4,61 @@ Ingress2gateway helps translate Ingress and provider-specific
 resources (CRDs) to Gateway API resources. Ingress2gateway is managed by the [Gateway
 API](https://gateway-api.sigs.k8s.io/) SIG-Network subproject.
 
+## Fork Enhancements (anrudraw)
+
+This fork adds enhanced support for **ingress-nginx to Istio (meshless)** migration:
+
+### Quick Start
+
+```bash
+# Clone the fork
+git clone https://github.com/anrudraw/ingress2gateway.git && cd ingress2gateway
+
+# Build
+go build -o ingress2gateway .
+
+# Convert ingresses from a namespace (per-namespace gateway mode - default)
+./ingress2gateway print --providers=ingress-nginx --namespace=my-service
+
+# Convert with centralized gateway mode
+./ingress2gateway print --providers=ingress-nginx \
+  --namespace=my-service \
+  --ingress-nginx-gateway-mode=centralized \
+  --ingress-nginx-gateway-namespace=istio-system \
+  --ingress-nginx-gateway-name=platform-gateway
+
+# Convert all namespaces
+./ingress2gateway print --providers=ingress-nginx --all-namespaces
+
+# Save output to file
+./ingress2gateway print --providers=ingress-nginx --namespace=my-service > gateway-resources.yaml
+```
+
+### New ingress-nginx Provider Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--ingress-nginx-ingress-class` | `nginx` | Ingress class to select |
+| `--ingress-nginx-gateway-mode` | `per-namespace` | `per-namespace` or `centralized` |
+| `--ingress-nginx-gateway-namespace` | `istio-system` | Namespace for centralized gateway |
+| `--ingress-nginx-gateway-name` | `platform-gateway` | Name of centralized gateway |
+
+### Auto-Generated Resources
+
+| NGINX Annotation | Generated Resource |
+|------------------|-------------------|
+| `backend-protocol: HTTPS` | BackendTLSPolicy |
+| `ssl-redirect: "true"` | HTTPRoute (HTTP→HTTPS redirect) |
+| `limit-rps` | EnvoyFilter (local_ratelimit) |
+| `proxy-body-size` | EnvoyFilter (buffer) |
+| `proxy-buffering: "off"` | EnvoyFilter (circuit_breakers) |
+| `auth-url` | EnvoyFilter (ext_authz) |
+| Cross-namespace | ReferenceGrant |
+
+See [ingress-nginx provider documentation](pkg/i2gw/providers/ingressnginx/README.md) for full details.
+
+---
+
 ## Scope
 
 Ingress2gateway is primarily focused on translating Ingress and provider-specific
