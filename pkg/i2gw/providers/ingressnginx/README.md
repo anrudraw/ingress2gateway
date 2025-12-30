@@ -73,6 +73,18 @@ backend-service-2/
 
 When using Istio without sidecars (meshless), the provider generates:
 
+### Auto-Generated Resources Summary
+
+| Annotation | Generated Resource | Notes |
+|------------|-------------------|-------|
+| `backend-protocol: HTTPS` | BackendTLSPolicy | mTLS to backend |
+| `ssl-redirect: "true"` | HTTPRoute (redirect) | HTTP→HTTPS redirect |
+| `limit-rps` | EnvoyFilter (local_ratelimit) | Rate limiting |
+| `proxy-body-size` | EnvoyFilter (buffer) | Max body size |
+| `proxy-buffering: "off"` | EnvoyFilter (circuit_breakers) | Disable buffering |
+| `auth-url` | EnvoyFilter (ext_authz) | External authentication |
+| Cross-namespace refs | ReferenceGrant | Allows HTTPRoute→Gateway |
+
 ### EnvoyFilters
 
 For annotations that require Envoy-level configuration, Istio EnvoyFilters are auto-generated:
@@ -82,6 +94,7 @@ For annotations that require Envoy-level configuration, Istio EnvoyFilters are a
 | `nginx.ingress.kubernetes.io/limit-rps` | `local_ratelimit` | Request rate limiting |
 | `nginx.ingress.kubernetes.io/proxy-body-size` | `buffer` | Max request body size |
 | `nginx.ingress.kubernetes.io/proxy-buffering: "off"` | `circuit_breakers` | Disable buffering |
+| `nginx.ingress.kubernetes.io/auth-url` | `ext_authz` | External authentication |
 
 EnvoyFilters are placed in the gateway namespace and target the appropriate Gateway using `targetRefs`.
 
@@ -159,14 +172,7 @@ spec:
         request: 7200s
 ```
 
-### SSL Redirect
-
-| Annotation | Gateway API Equivalent | Description |
-|------------|----------------------|-------------|
-| `nginx.ingress.kubernetes.io/ssl-redirect` | HTTPRoute RequestRedirect filter | Redirect HTTP to HTTPS |
-| `nginx.ingress.kubernetes.io/force-ssl-redirect` | HTTPRoute RequestRedirect filter | Force redirect even without TLS |
-
-### Proxy Settings
+### Proxy Settings (Auto-Generated EnvoyFilters)
 
 | Annotation | Istio Support | Description |
 |------------|---------------|-------------|
@@ -174,24 +180,7 @@ spec:
 | `nginx.ingress.kubernetes.io/proxy-buffering` | EnvoyFilter (auto-generated) | Enable/disable proxy buffering |
 | `nginx.ingress.kubernetes.io/proxy-request-buffering` | Manual config required | Request buffering |
 
-### Load Balancing (EWMA)
-
-The `load-balance: ewma` annotation requires manual configuration via Istio DestinationRule:
-
-```yaml
-apiVersion: networking.istio.io/v1beta1
-kind: DestinationRule
-metadata:
-  name: myservice-lb
-  namespace: backend-service-1
-spec:
-  host: myservice.backend-service-1.svc.cluster.local
-  trafficPolicy:
-    loadBalancer:
-      simple: LEAST_REQUEST  # Closest to EWMA behavior
-```
-
-### Rate Limiting
+### Rate Limiting (Auto-Generated EnvoyFilters)
 
 EnvoyFilters are auto-generated for rate limiting:
 
@@ -226,6 +215,54 @@ spec:
               fill_interval: 1s
 ```
 
+### Load Balancing (EWMA)
+
+The `load-balance: ewma` annotation requires manual configuration via Istio DestinationRule:
+
+```yaml
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: myservice-lb
+  namespace: backend-service-1
+spec:
+  host: myservice.backend-service-1.svc.cluster.local
+  trafficPolicy:
+    loadBalancer:
+      simple: LEAST_REQUEST  # Closest to EWMA behavior
+```
+
+### SSL Redirect (Auto-Generated HTTPRoutes)
+
+When `ssl-redirect: "true"` is detected, the tool automatically generates redirect HTTPRoutes:
+
+| Annotation | Gateway API Equivalent | Description |
+|------------|----------------------|-------------|
+| `nginx.ingress.kubernetes.io/ssl-redirect` | HTTPRoute with RequestRedirect filter | Redirect HTTP to HTTPS |
+| `nginx.ingress.kubernetes.io/force-ssl-redirect` | HTTPRoute with RequestRedirect filter | Force redirect even without TLS |
+
+**Example output:**
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: myservice-redirect
+  annotations:
+    ingress2gateway.kubernetes.io/source: nginx.ingress.kubernetes.io/ssl-redirect
+spec:
+  parentRefs:
+    - name: myservice-gateway
+      sectionName: myhost-http  # Targets HTTP listener only
+  hostnames:
+    - myhost.example.com
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
+```
+
 ### Client Certificate Authentication
 
 These annotations are stored in the IR:
@@ -239,9 +276,11 @@ These annotations are stored in the IR:
 
 **Meshless Istio Limitation:** Client cert validation applies to the entire Gateway listener, not per-route. For per-customer client certs, use separate Gateway listeners or validate in the application.
 
-### External Authentication
+**Centralized Mode Warning:** In centralized mode, a WARNING is emitted because client cert validation on the shared platform Gateway affects ALL services on that listener.
 
-These annotations are stored in the IR:
+### External Authentication (Auto-Generated EnvoyFilter)
+
+When `auth-url` is detected, an ext_authz EnvoyFilter is automatically generated:
 
 | Annotation | Description |
 |------------|-------------|
@@ -250,16 +289,61 @@ These annotations are stored in the IR:
 | `nginx.ingress.kubernetes.io/auth-signin` | Sign-in redirect URL |
 | `nginx.ingress.kubernetes.io/auth-response-headers` | Headers to copy from auth response |
 
+**Example EnvoyFilter output:**
+```yaml
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: myservice-extauthz
+  namespace: myservice-gateway
+  annotations:
+    ingress2gateway.kubernetes.io/auth-url: https://auth.example.com/verify
+spec:
+  targetRefs:
+    - kind: Gateway
+      name: myservice-gateway
+  configPatches:
+    - applyTo: HTTP_FILTER
+      patch:
+        operation: INSERT_BEFORE
+        value:
+          name: envoy.filters.http.ext_authz
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+            http_service:
+              server_uri:
+                uri: https://auth.example.com/verify
+                cluster: outbound|80||ext-authz-service
+                timeout: 5s
+```
+
 **Meshless Istio Limitation:** External auth (ext_authz) can only be configured at the Gateway level, not per-route. For per-route auth, implement auth checks in your application or enable Istio sidecars.
+
+**Centralized Mode Warning:** In centralized mode, a WARNING is emitted because the ext_authz EnvoyFilter targets the shared platform Gateway and applies to ALL services.
+
+## Notification Types
+
+The tool emits three types of notifications to help you understand the migration:
+
+| Type | Meaning | Action Required |
+|------|---------|----------------|
+| **INFO** | Feature auto-generated or handled | Review generated resources |
+| **WARNING** | Feature has caveats or blast radius concerns | Review and validate |
+| **ERROR** | Migration blocker requiring app changes | Must fix before migration |
+
+**Examples:**
+- `INFO`: BackendTLSPolicy created, EnvoyFilter generated, HTTPRoute redirect created
+- `WARNING`: Centralized mode auth affects all services
+- `ERROR`: server-snippet, use-regex, rewrite-target with capture groups
 
 ## Annotations Requiring App-Level Changes
 
-The following annotations cannot be translated to Gateway API and require application changes. The tool emits warnings when these are detected:
+The following annotations cannot be translated to Gateway API and require application changes. The tool emits **ERROR** notifications when these are detected:
 
 | Annotation | Issue | Recommended Action |
 |------------|-------|-------------------|
 | `nginx.ingress.kubernetes.io/server-snippet` | Custom NGINX config has no Gateway API equivalent | Move logic to application middleware |
-| `nginx.ingress.kubernetes.io/configuration-snippet` | Custom location config | Move to application |
+| `nginx.ingress.kubernetes.io/configuration-snippet` | Custom location config | Move to application or use EnvoyFilter |
 | `nginx.ingress.kubernetes.io/use-regex` | Regex path matching is not GA in Gateway API | Refactor API paths to use prefix matching |
 | `nginx.ingress.kubernetes.io/rewrite-target` (with `$1`, `$2`) | URLRewrite filter does not support capture groups | Refactor application to accept original paths |
 
