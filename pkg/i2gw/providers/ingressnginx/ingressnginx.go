@@ -31,13 +31,13 @@ import (
 
 // The Name of the provider.
 const Name = "ingress-nginx"
-const NginxIngressClass = "nginx"
+const NginxIngressClass = "tag-ingress"
 const NginxIngressClassFlag = "ingress-class"
 
 // Gateway mode flags
 const (
 	// GatewayModeFlag specifies the gateway deployment mode
-	// Options: "per-namespace" (default) or "centralized"
+	// Options: "centralized" (default) or "per-namespace"
 	GatewayModeFlag = "gateway-mode"
 	
 	// GatewayNamespaceFlag specifies the namespace for centralized gateway
@@ -48,8 +48,8 @@ const (
 	// Default: "platform-gateway"
 	GatewayNameFlag = "gateway-name"
 	
-	// Default values
-	DefaultGatewayMode      = "per-namespace"
+	// Default values - Centralized gateway is the default
+	DefaultGatewayMode      = "centralized"
 	DefaultGatewayNamespace = "istio-system"
 	DefaultGatewayName      = "platform-gateway"
 )
@@ -58,12 +58,12 @@ func init() {
 	i2gw.ProviderConstructorByName[Name] = NewProvider
 	i2gw.RegisterProviderSpecificFlag(Name, i2gw.ProviderSpecificFlag{
 		Name:         "ingress-class",
-		Description:  "The name of the ingress class to select. Defaults to 'nginx'",
+		Description:  "The name of the ingress class to select. Defaults to 'tag-ingress'",
 		DefaultValue: NginxIngressClass,
 	})
 	i2gw.RegisterProviderSpecificFlag(Name, i2gw.ProviderSpecificFlag{
 		Name:         GatewayModeFlag,
-		Description:  "Gateway deployment mode: 'per-namespace' (each namespace gets its own Gateway) or 'centralized' (single platform Gateway in istio-system)",
+		Description:  "Gateway deployment mode: 'centralized' (single platform Gateway in istio-system, DEFAULT) or 'per-namespace' (each namespace gets its own Gateway)",
 		DefaultValue: DefaultGatewayMode,
 	})
 	i2gw.RegisterProviderSpecificFlag(Name, i2gw.ProviderSpecificFlag{
@@ -218,28 +218,23 @@ func (p *Provider) emitCentralizedModeWarnings(ir intermediate.IR) {
 
 // transformGatewaysForMode transforms the generated Gateways based on the gateway mode.
 // In per-namespace mode, each service namespace gets its own Gateway in a dedicated gateway namespace.
-// In centralized mode, all routes use a single platform Gateway.
+// In centralized mode, all routes use a single pre-provisioned platform Gateway (no Gateway generated).
 func (p *Provider) transformGatewaysForMode(gatewayResources *i2gw.GatewayResources, ir intermediate.IR) {
 	if p.gatewayConfig.Mode == "centralized" {
-		// For centralized mode, update Gateway to use the configured namespace/name
-		newGateways := make(map[types.NamespacedName]gatewayv1.Gateway)
-		for oldKey, gw := range gatewayResources.Gateways {
-			// Create new gateway with centralized naming
-			newKey := types.NamespacedName{
-				Namespace: p.gatewayConfig.Namespace,
-				Name:      p.gatewayConfig.Name,
-			}
-			gw.Namespace = p.gatewayConfig.Namespace
-			gw.Name = p.gatewayConfig.Name
-			// Use istio as the gateway class for Istio deployments
-			istioClass := gatewayv1.ObjectName("istio")
-			gw.Spec.GatewayClassName = istioClass
-			newGateways[newKey] = gw
-			
-			// Update HTTPRoutes to reference the new gateway
-			p.updateHTTPRouteParentRefs(gatewayResources, oldKey, newKey)
+		// For centralized mode, the platform-gateway is pre-provisioned by the platform team.
+		// We only need to update HTTPRoutes to reference it - do NOT generate Gateway resources.
+		centralizedGatewayKey := types.NamespacedName{
+			Namespace: p.gatewayConfig.Namespace,
+			Name:      p.gatewayConfig.Name,
 		}
-		gatewayResources.Gateways = newGateways
+		
+		// Update all HTTPRoutes to reference the centralized gateway
+		for oldKey := range gatewayResources.Gateways {
+			p.updateHTTPRouteParentRefs(gatewayResources, oldKey, centralizedGatewayKey)
+		}
+		
+		// Clear the Gateways map - centralized gateway is pre-provisioned, not generated
+		gatewayResources.Gateways = make(map[types.NamespacedName]gatewayv1.Gateway)
 		return
 	}
 	

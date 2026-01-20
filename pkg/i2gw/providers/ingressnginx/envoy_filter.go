@@ -51,14 +51,16 @@ func envoyFilterFeature(ingresses []networkingv1.Ingress, _ map[types.Namespaced
 			hasEnvoyConfig = true
 			details = append(details, "rate-limiting")
 		}
-		if _, ok := annotations["nginx.ingress.kubernetes.io/proxy-body-size"]; ok {
-			hasEnvoyConfig = true
-			details = append(details, "body-size")
+		// Only report body-size if non-zero (0 means unlimited, no EnvoyFilter needed)
+		if v, ok := annotations["nginx.ingress.kubernetes.io/proxy-body-size"]; ok {
+			bodyBytes, _ := ParseBodySize(v)
+			if bodyBytes > 0 {
+				hasEnvoyConfig = true
+				details = append(details, "body-size")
+			}
 		}
-		if v, ok := annotations["nginx.ingress.kubernetes.io/proxy-buffering"]; ok && v == "off" {
-			hasEnvoyConfig = true
-			details = append(details, "no-buffering")
-		}
+		// Note: proxy-buffering: "off" does NOT need an EnvoyFilter - Envoy streams by default
+		// which matches NGINX's "off" behavior. No notification needed.
 
 		if hasEnvoyConfig {
 			notify(notifications.InfoNotification,
@@ -133,31 +135,25 @@ func (g *EnvoyFilterGenerator) GenerateEnvoyFilters(ir intermediate.IR) map[type
 		}
 
 		// Generate body size EnvoyFilter if configured
+		// NGINX behavior: "0" means unlimited (no restriction), so skip EnvoyFilter in that case
 		if nginxIR.ProxyBodySize != "" {
-			filterKey := types.NamespacedName{
-				Namespace: filterNamespace,
-				Name:      fmt.Sprintf("%s-%s-bodysize", routeKey.Namespace, routeKey.Name),
+			bodyBytes, _ := ParseBodySize(nginxIR.ProxyBodySize)
+			if bodyBytes > 0 { // Only generate EnvoyFilter if a limit is specified (non-zero)
+				filterKey := types.NamespacedName{
+					Namespace: filterNamespace,
+					Name:      fmt.Sprintf("%s-%s-bodysize", routeKey.Namespace, routeKey.Name),
+				}
+				filters[filterKey] = g.buildBodySizeEnvoyFilter(
+					filterKey,
+					gwNamespace,
+					gwName,
+					bodyBytes,
+				)
 			}
-			filters[filterKey] = g.buildBodySizeEnvoyFilter(
-				filterKey,
-				gwNamespace,
-				gwName,
-				nginxIR.ProxyBodySize,
-			)
 		}
 
-		// Generate buffering EnvoyFilter if configured
-		if nginxIR.ProxyBuffering != nil && !*nginxIR.ProxyBuffering {
-			filterKey := types.NamespacedName{
-				Namespace: filterNamespace,
-				Name:      fmt.Sprintf("%s-%s-nobuffer", routeKey.Namespace, routeKey.Name),
-			}
-			filters[filterKey] = g.buildNoBufferingEnvoyFilter(
-				filterKey,
-				gwNamespace,
-				gwName,
-			)
-		}
+		// Note: proxy-buffering: "off" does NOT need an EnvoyFilter
+		// Envoy streams by default (no buffering), which matches NGINX's "off" behavior.
 
 		// Generate ext_authz EnvoyFilter if configured (per-namespace mode only)
 		// In per-namespace mode, the Gateway is namespace-scoped so ext_authz applies only to that namespace
@@ -269,18 +265,20 @@ func (g *EnvoyFilterGenerator) buildRateLimitEnvoyFilter(
 	return filter
 }
 
-// buildBodySizeEnvoyFilter creates an EnvoyFilter to set max request body size
+// buildBodySizeEnvoyFilter creates an EnvoyFilter to set max request body size.
+// The bodyBytes parameter should already be parsed and validated (> 0).
+// NGINX behavior: "0" means unlimited - callers should skip this function for 0 values.
 func (g *EnvoyFilterGenerator) buildBodySizeEnvoyFilter(
 	key types.NamespacedName,
 	gatewayNamespace string,
 	gatewayName string,
-	bodySize string,
+	bodyBytes int64,
 ) *unstructured.Unstructured {
 
-	// Parse body size to bytes
-	bytes, err := ParseBodySize(bodySize)
-	if err != nil || bytes == 0 {
-		bytes = 1024 * 1024 * 1024 // Default 1GB if parsing fails
+	bytes := bodyBytes
+	if bytes <= 0 {
+		// This shouldn't happen if caller checks properly, but default to 1GB as fallback
+		bytes = 1024 * 1024 * 1024
 	}
 
 	filter := &unstructured.Unstructured{
@@ -296,7 +294,7 @@ func (g *EnvoyFilterGenerator) buildBodySizeEnvoyFilter(
 				},
 				"annotations": map[string]interface{}{
 					"ingress2gateway.kubernetes.io/source":     "nginx.ingress.kubernetes.io/proxy-body-size",
-					"ingress2gateway.kubernetes.io/body-size":  bodySize,
+					"ingress2gateway.kubernetes.io/body-size":  fmt.Sprintf("%d", bytes),
 				},
 			},
 			"spec": map[string]interface{}{

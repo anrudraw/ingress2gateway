@@ -52,7 +52,7 @@ const (
 
 // NginxIngressClass class name
 const (
-	NginxIngressClass = "nginx"
+	NginxIngressClass = "tag-ingress"
 )
 
 // Resource kind constants

@@ -6,47 +6,22 @@ The project supports translating ingress-nginx specific annotations to Gateway A
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--ingress-nginx-ingress-class` | `nginx` | The name of the Ingress class to select |
-| `--ingress-nginx-gateway-mode` | `per-namespace` | Gateway deployment mode: `per-namespace` or `centralized` |
-| `--ingress-nginx-gateway-namespace` | `istio-system` | Namespace for centralized gateway (only used when mode=centralized) |
-| `--ingress-nginx-gateway-name` | `platform-gateway` | Name of centralized gateway (only used when mode=centralized) |
+| `--ingress-nginx-ingress-class` | `tag-ingress` | The name of the Ingress class to select |
+| `--ingress-nginx-gateway-mode` | `centralized` | Gateway deployment mode: `centralized` (DEFAULT) or `per-namespace` |
+| `--ingress-nginx-gateway-namespace` | `istio-system` | Namespace for centralized gateway |
+| `--ingress-nginx-gateway-name` | `platform-gateway` | Name of centralized gateway |
 
 ## Gateway Deployment Modes
 
-### Per-Namespace Mode (Default)
+### Centralized Mode (Default)
 
-Creates a dedicated gateway namespace for each service namespace. This provides clear ownership boundaries between platform and service teams.
-
-```bash
-# Convert ingresses from backend-service-1 namespace
-ingress2gateway print --providers ingress-nginx --namespace backend-service-1
-```
-
-**Result:**
-```
-backend-service-1-gateway/       # Platform team owned
-    Gateway: backend-service-1-gateway
-    ReferenceGrant: allow-routes-from-backend-service-1
-    EnvoyFilters (if applicable)
-
-backend-service-1/               # Service team owned (unchanged)
-    HTTPRoute                    # Converted from Ingress
-    BackendTLSPolicy             # For backend-protocol: HTTPS
-    Services
-    Deployments
-```
-
-| Service Namespace | Gateway Namespace | Gateway Name |
-|-------------------|-------------------|--------------|
-| `backend-service-1` | `backend-service-1-gateway` | `backend-service-1-gateway` |
-| `backend-service-2` | `backend-service-2-gateway` | `backend-service-2-gateway` |
-| `backend-service-3` | `backend-service-3-gateway` | `backend-service-3-gateway` |
-
-### Centralized Mode
-
-Creates a single shared gateway in a platform namespace (e.g., `istio-system`).
+Creates a single shared gateway (`platform-gateway`) in `istio-system`. **This is the recommended default for most teams.**
 
 ```bash
+# Default: Centralized mode
+ingress2gateway print --providers ingress-nginx --all-namespaces
+
+# Explicit centralized mode with custom settings
 ingress2gateway print --providers ingress-nginx \
   --ingress-nginx-gateway-mode=centralized \
   --ingress-nginx-gateway-namespace=istio-system \
@@ -68,6 +43,40 @@ backend-service-1/
 backend-service-2/
     HTTPRoute (parentRefs: istio-system/platform-gateway)
 ```
+
+### Per-Namespace Mode (Exceptional Cases)
+
+Creates a dedicated gateway namespace for each service namespace. **Only use when:**
+- Regulatory requirements mandate traffic isolation (HIPAA, SOC2)
+- Dedicated gateway resources are needed for performance SLAs
+- Auth configuration must be gateway-scoped (ext_authz, mTLS)
+
+```bash
+# Per-namespace mode (not recommended for most teams)
+ingress2gateway print --providers ingress-nginx \
+  --ingress-nginx-gateway-mode=per-namespace \
+  --namespace backend-service-1
+```
+
+**Result:**
+```
+backend-service-1-gateway/       # Platform team owned
+    Gateway: backend-service-1-gateway
+    ReferenceGrant: allow-routes-from-backend-service-1
+    EnvoyFilters (if applicable)
+
+backend-service-1/               # Service team owned (unchanged)
+    HTTPRoute                    # Converted from Ingress
+    BackendTLSPolicy             # For backend-protocol: HTTPS
+    Services
+    Deployments
+```
+
+| Service Namespace | Gateway Namespace | Gateway Name |
+|-------------------|-------------------|--------------|
+| `backend-service-1` | `backend-service-1-gateway` | `backend-service-1-gateway` |
+| `backend-service-2` | `backend-service-2-gateway` | `backend-service-2-gateway` |
+| `backend-service-3` | `backend-service-3-gateway` | `backend-service-3-gateway` |
 
 ## Istio Meshless Features
 

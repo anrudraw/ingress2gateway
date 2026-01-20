@@ -27,7 +27,7 @@ import (
 
 // NginxIngressClasses contains NGINX IngressClass names
 var NginxIngressClasses = sets.New(
-	"nginx",
+	"tag-ingress",
 )
 
 type resourceReader struct {
