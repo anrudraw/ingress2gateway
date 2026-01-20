@@ -166,7 +166,7 @@ func (p *Provider) ToGatewayResources(ir intermediate.IR) (i2gw.GatewayResources
 	buildSSLRedirectRoutes(ir, &gatewayResources, p.gatewayConfig)
 	
 	// Build Istio EnvoyFilters for implementation-specific features
-	buildIstioEnvoyFilters(ir, &gatewayResources, p.gatewayConfig)
+	// buildIstioEnvoyFilters(ir, &gatewayResources, p.gatewayConfig)
 	
 	// Generate ReferenceGrants for cross-namespace routing
 	// Always needed since Gateways are in istio-system and HTTPRoutes are in service namespaces
