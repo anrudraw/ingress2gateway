@@ -62,10 +62,15 @@ func envoyFilterFeature(ingresses []networkingv1.Ingress, _ map[types.Namespaced
 		// Note: proxy-buffering: "off" does NOT need an EnvoyFilter - Envoy streams by default
 		// which matches NGINX's "off" behavior. No notification needed.
 
+		// Check for auth-url which needs app-level handling
+		if _, ok := annotations["nginx.ingress.kubernetes.io/auth-url"]; ok {
+			hasEnvoyConfig = true
+			details = append(details, "external-auth")
+		}
+
 		if hasEnvoyConfig {
-			notify(notifications.InfoNotification,
-				fmt.Sprintf("EnvoyFilter will be generated for: %s (see --ingress-nginx-gateway-mode flag for targeting)",
-					strings.Join(details, ", ")),
+			notify(notifications.WarningNotification, fmt.Sprintf("WARNING: Annotations requiring app-level handling detected: %s. These have no Gateway API equivalent - implement in your application.",
+				strings.Join(details, ", ")),
 				&ing,
 			)
 		}
@@ -109,10 +114,10 @@ func (g *EnvoyFilterGenerator) GenerateEnvoyFilters(ir intermediate.IR) map[type
 		}
 
 		nginxIR := routeCtx.ProviderSpecificIR.IngressNginx
-		
+
 		// Get the gateway reference based on mode
 		gwNamespace, gwName := g.GatewayConfig.GetGatewayRef(routeKey.Namespace)
-		
+
 		// For centralized mode, EnvoyFilters go in the gateway namespace
 		filterNamespace := routeKey.Namespace
 		if g.GatewayConfig.IsCentralized() {
@@ -235,9 +240,9 @@ func (g *EnvoyFilterGenerator) buildRateLimitEnvoyFilter(
 									"@type":       "type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit",
 									"stat_prefix": "http_local_rate_limiter",
 									"token_bucket": map[string]interface{}{
-										"max_tokens":     burst,
+										"max_tokens":      burst,
 										"tokens_per_fill": rps,
-										"fill_interval":  "1s",
+										"fill_interval":   "1s",
 									},
 									"filter_enabled": map[string]interface{}{
 										"runtime_key": "local_rate_limit_enabled",
@@ -293,8 +298,8 @@ func (g *EnvoyFilterGenerator) buildBodySizeEnvoyFilter(
 					"gateway-api-migration":        "true",
 				},
 				"annotations": map[string]interface{}{
-					"ingress2gateway.kubernetes.io/source":     "nginx.ingress.kubernetes.io/proxy-body-size",
-					"ingress2gateway.kubernetes.io/body-size":  fmt.Sprintf("%d", bytes),
+					"ingress2gateway.kubernetes.io/source":    "nginx.ingress.kubernetes.io/proxy-body-size",
+					"ingress2gateway.kubernetes.io/body-size": fmt.Sprintf("%d", bytes),
 				},
 			},
 			"spec": map[string]interface{}{
