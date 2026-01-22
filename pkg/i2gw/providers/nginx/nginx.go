@@ -43,7 +43,7 @@ const (
 	GatewayModeFlag = "gateway-mode"
 	
 	// GatewayNamespaceFlag specifies the namespace for centralized gateway
-	// Default: "istio-system"
+	// Default: "ionianshared"
 	GatewayNamespaceFlag = "gateway-namespace"
 	
 	// GatewayNameFlag specifies the name of the centralized gateway
@@ -52,7 +52,7 @@ const (
 	
 	// Default values - Centralized gateway is the default
 	DefaultGatewayMode      = "centralized"
-	DefaultGatewayNamespace = "istio-system"
+	DefaultGatewayNamespace = "ionianshared"
 	DefaultGatewayName      = "platform-gateway"
 )
 
@@ -65,7 +65,7 @@ func init() {
 	})
 	i2gw.RegisterProviderSpecificFlag(Name, i2gw.ProviderSpecificFlag{
 		Name:         GatewayModeFlag,
-		Description:  "Gateway deployment mode: 'centralized' (single platform Gateway in istio-system, DEFAULT) or 'per-namespace' (each namespace gets its own Gateway)",
+		Description:  "Gateway deployment mode: 'centralized' (single platform Gateway in ionianshared, DEFAULT) or 'per-namespace' (each namespace gets its own Gateway)",
 		DefaultValue: DefaultGatewayMode,
 	})
 	i2gw.RegisterProviderSpecificFlag(Name, i2gw.ProviderSpecificFlag{
@@ -183,7 +183,7 @@ func (p *Provider) ToGatewayResources(ir intermediate.IR) (i2gw.GatewayResources
 }
 
 // transformGatewaysForMode transforms the generated Gateways based on the gateway mode.
-// In centralized mode (default), all routes use a single platform Gateway in istio-system.
+// In centralized mode (default), all routes use a single platform Gateway in ionianshared.
 // In per-namespace mode, each service namespace gets its own Gateway in a dedicated gateway namespace.
 func (p *Provider) transformGatewaysForMode(gatewayResources *i2gw.GatewayResources, ir intermediate.IR) {
 	if p.gatewayConfig.Mode == "centralized" {

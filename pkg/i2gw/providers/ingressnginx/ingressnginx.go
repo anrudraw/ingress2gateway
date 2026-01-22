@@ -41,7 +41,7 @@ const (
 	GatewayModeFlag = "gateway-mode"
 	
 	// GatewayNamespaceFlag specifies the namespace for centralized gateway
-	// Default: "istio-system"
+	// Default: "ionianshared"
 	GatewayNamespaceFlag = "gateway-namespace"
 	
 	// GatewayNameFlag specifies the name of the centralized gateway
@@ -50,7 +50,7 @@ const (
 	
 	// Default values - Centralized gateway is the default
 	DefaultGatewayMode      = "centralized"
-	DefaultGatewayNamespace = "istio-system"
+	DefaultGatewayNamespace = "ionianshared"
 	DefaultGatewayName      = "platform-gateway"
 )
 
@@ -63,7 +63,7 @@ func init() {
 	})
 	i2gw.RegisterProviderSpecificFlag(Name, i2gw.ProviderSpecificFlag{
 		Name:         GatewayModeFlag,
-		Description:  "Gateway deployment mode: 'centralized' (single platform Gateway in istio-system, DEFAULT) or 'per-namespace' (each namespace gets its own Gateway)",
+		Description:  "Gateway deployment mode: 'centralized' (single platform Gateway in ionianshared, DEFAULT) or 'per-namespace' (each namespace gets its own Gateway)",
 		DefaultValue: DefaultGatewayMode,
 	})
 	i2gw.RegisterProviderSpecificFlag(Name, i2gw.ProviderSpecificFlag{

@@ -8,14 +8,14 @@ The project supports translating ingress-nginx specific annotations to Gateway A
 |------|---------|-------------|
 | `--ingress-nginx-ingress-class` | `tag-ingress` | The name of the Ingress class to select |
 | `--ingress-nginx-gateway-mode` | `centralized` | Gateway deployment mode: `centralized` (DEFAULT) or `per-namespace` |
-| `--ingress-nginx-gateway-namespace` | `istio-system` | Namespace for centralized gateway |
+| `--ingress-nginx-gateway-namespace` | `ionianshared` | Namespace for centralized gateway |
 | `--ingress-nginx-gateway-name` | `platform-gateway` | Name of centralized gateway |
 
 ## Gateway Deployment Modes
 
 ### Centralized Mode (Default)
 
-Creates a single shared gateway (`platform-gateway`) in `istio-system`. **This is the recommended default for most teams.**
+Creates a single shared gateway (`platform-gateway`) in `ionianshared`. **This is the recommended default for most teams.**
 
 ```bash
 # Default: Centralized mode
@@ -24,24 +24,24 @@ ingress2gateway print --providers ingress-nginx --all-namespaces
 # Explicit centralized mode with custom settings
 ingress2gateway print --providers ingress-nginx \
   --ingress-nginx-gateway-mode=centralized \
-  --ingress-nginx-gateway-namespace=istio-system \
+  --ingress-nginx-gateway-namespace=ionianshared \
   --ingress-nginx-gateway-name=platform-gateway \
   --all-namespaces
 ```
 
 **Result:**
 ```
-istio-system/                    # Platform team owned
+ionianshared/                    # Platform team owned
     Gateway: platform-gateway
     ReferenceGrant: allow-routes-from-backend-service-1
     ReferenceGrant: allow-routes-from-backend-service-2
     EnvoyFilters
 
 backend-service-1/
-    HTTPRoute (parentRefs: istio-system/platform-gateway)
+    HTTPRoute (parentRefs: ionianshared/platform-gateway)
 
 backend-service-2/
-    HTTPRoute (parentRefs: istio-system/platform-gateway)
+    HTTPRoute (parentRefs: ionianshared/platform-gateway)
 ```
 
 ### Per-Namespace Mode (Exceptional Cases)

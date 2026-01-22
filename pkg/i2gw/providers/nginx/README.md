@@ -34,12 +34,12 @@ This provider converts [NGINX Ingress Controller](https://github.com/nginx/kuber
 |------|---------|-------------|
 | `--nginx-ingress-class` | `tag-ingress` | The name of the ingress class to select |
 | `--nginx-gateway-mode` | `centralized` | `centralized` (DEFAULT) or `per-namespace` |
-| `--nginx-gateway-namespace` | `istio-system` | Namespace for centralized gateway |
+| `--nginx-gateway-namespace` | `ionianshared` | Namespace for centralized gateway |
 | `--nginx-gateway-name` | `platform-gateway` | Name of centralized gateway |
 
 ```bash
 # Convert NGINX Ingress Controller resources from cluster
-# Default: Centralized platform-gateway in istio-system
+# Default: Centralized platform-gateway in ionianshared
 ingress2gateway print --providers=nginx
 
 # Convert from file (centralized mode is default)
@@ -59,7 +59,7 @@ ingress2gateway print --providers=nginx \
 ### Centralized Mode (Default)
 
 By default, the provider generates resources for a **centralized gateway** deployment:
-- Single `platform-gateway` in `istio-system` namespace
+- Single `platform-gateway` in `ionianshared` namespace
 - All HTTPRoutes reference this shared gateway
 - Recommended for most use cases
 
@@ -72,7 +72,7 @@ For workloads requiring dedicated gateways:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--nginx-gateway-mode` | `centralized` | `centralized` or `per-namespace` |
-| `--nginx-gateway-namespace` | `istio-system` | Namespace for centralized gateway |
+| `--nginx-gateway-namespace` | `ionianshared` | Namespace for centralized gateway |
 | `--nginx-gateway-name` | `platform-gateway` | Name of centralized gateway |
 
 ## Gateway API Mapping

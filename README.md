@@ -24,7 +24,7 @@ go build -o ingress2gateway .
 ./ingress2gateway print --providers=ingress-nginx \
   --namespace=my-service \
   --ingress-nginx-gateway-mode=centralized \
-  --ingress-nginx-gateway-namespace=istio-system \
+  --ingress-nginx-gateway-namespace=ionianshared \
   --ingress-nginx-gateway-name=platform-gateway
 
 # Convert all namespaces
