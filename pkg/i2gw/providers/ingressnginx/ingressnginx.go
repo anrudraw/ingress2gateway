@@ -54,12 +54,17 @@ const (
 	// CAConfigMapFlag specifies the name of the CA ConfigMap for BackendTLSPolicy
 	CAConfigMapFlag = "ca-configmap"
 	
+	// SkipReferenceGrantFlag skips generation of ReferenceGrant resources
+	// Default: true (platform team handles ReferenceGrants via Helm)
+	SkipReferenceGrantFlag = "skip-reference-grant"
+	
 	// Default values - Centralized gateway is the default
-	DefaultGatewayMode      = "centralized"
-	DefaultGatewayNamespace = "ionianshared"
-	DefaultGatewayName      = "platform-gateway"
-	DefaultOwner            = ""
-	DefaultCAConfigMap      = "ca-ame-nginx"
+	DefaultGatewayMode         = "centralized"
+	DefaultGatewayNamespace    = "ionianshared"
+	DefaultGatewayName         = "platform-gateway"
+	DefaultOwner               = ""
+	DefaultCAConfigMap         = "ca-ame-nginx"
+	DefaultSkipReferenceGrant  = "true"
 )
 
 func init() {
@@ -94,6 +99,11 @@ func init() {
 		Description:  "CA ConfigMap name for BackendTLSPolicy validation",
 		DefaultValue: DefaultCAConfigMap,
 	})
+	i2gw.RegisterProviderSpecificFlag(Name, i2gw.ProviderSpecificFlag{
+		Name:         SkipReferenceGrantFlag,
+		Description:  "Skip generation of ReferenceGrant resources (default: true, platform team handles via Helm)",
+		DefaultValue: DefaultSkipReferenceGrant,
+	})
 }
 
 // GatewayConfig holds gateway deployment configuration
@@ -106,6 +116,8 @@ type GatewayConfig struct {
 	Name string
 	// Owner is the owner name for sectionName in parentRefs
 	Owner string
+	// SkipReferenceGrant skips ReferenceGrant generation (platform team handles via Helm)
+	SkipReferenceGrant bool
 }
 
 // IsCentralized returns true if using centralized gateway mode
@@ -158,6 +170,11 @@ func NewProvider(conf *i2gw.ProviderConf) i2gw.Provider {
 			if owner, ok := flags[OwnerFlag]; ok && owner != "" {
 				gwConfig.Owner = owner
 			}
+			if skipRG, ok := flags[SkipReferenceGrantFlag]; ok {
+				gwConfig.SkipReferenceGrant = skipRG == "true"
+			} else {
+				gwConfig.SkipReferenceGrant = true // Default to true
+			}
 		}
 	}
 	
@@ -190,9 +207,17 @@ func (p *Provider) ToGatewayResources(ir intermediate.IR) (i2gw.GatewayResources
 	// Build Istio EnvoyFilters for implementation-specific features
 	// buildIstioEnvoyFilters(ir, &gatewayResources, p.gatewayConfig)
 	
-	// Generate ReferenceGrants for cross-namespace routing
-	// Always needed since Gateways are in istio-system and HTTPRoutes are in service namespaces
-	buildCrossNamespaceReferenceGrants(ir, &gatewayResources, p.gatewayConfig)
+	// Generate ReferenceGrants for cross-namespace routing (unless skipped)
+	// By default, platform team handles ReferenceGrants via istio-meshless-helm chart
+	if !p.gatewayConfig.SkipReferenceGrant {
+		buildCrossNamespaceReferenceGrants(ir, &gatewayResources, p.gatewayConfig)
+	} else {
+		notify(notifications.InfoNotification,
+			"Skipping ReferenceGrant generation (--ingress-nginx-skip-reference-grant=true). "+
+				"Platform team manages ReferenceGrants via istio-meshless-helm chart.",
+			nil,
+		)
+	}
 	
 	// Emit centralized mode warnings for auth annotations
 	p.emitCentralizedModeWarnings(ir)
