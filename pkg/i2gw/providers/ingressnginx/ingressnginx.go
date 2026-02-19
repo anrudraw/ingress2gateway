@@ -48,10 +48,18 @@ const (
 	// Default: "platform-gateway"
 	GatewayNameFlag = "gateway-name"
 	
+	// OwnerFlag specifies the owner name for sectionName in parentRefs
+	OwnerFlag = "owner"
+	
+	// CAConfigMapFlag specifies the name of the CA ConfigMap for BackendTLSPolicy
+	CAConfigMapFlag = "ca-configmap"
+	
 	// Default values - Centralized gateway is the default
 	DefaultGatewayMode      = "centralized"
 	DefaultGatewayNamespace = "ionianshared"
 	DefaultGatewayName      = "platform-gateway"
+	DefaultOwner            = ""
+	DefaultCAConfigMap      = "ca-ame-nginx"
 )
 
 func init() {
@@ -76,6 +84,16 @@ func init() {
 		Description:  "Name of the centralized gateway (only used when gateway-mode=centralized)",
 		DefaultValue: DefaultGatewayName,
 	})
+	i2gw.RegisterProviderSpecificFlag(Name, i2gw.ProviderSpecificFlag{
+		Name:         OwnerFlag,
+		Description:  "Owner name for sectionName in parentRefs",
+		DefaultValue: DefaultOwner,
+	})
+	i2gw.RegisterProviderSpecificFlag(Name, i2gw.ProviderSpecificFlag{
+		Name:         CAConfigMapFlag,
+		Description:  "CA ConfigMap name for BackendTLSPolicy validation",
+		DefaultValue: DefaultCAConfigMap,
+	})
 }
 
 // GatewayConfig holds gateway deployment configuration
@@ -86,6 +104,8 @@ type GatewayConfig struct {
 	Namespace string
 	// Name is the gateway name (for centralized mode, e.g., platform-gateway)
 	Name string
+	// Owner is the owner name for sectionName in parentRefs
+	Owner string
 }
 
 // IsCentralized returns true if using centralized gateway mode
@@ -95,9 +115,8 @@ func (c GatewayConfig) IsCentralized() bool {
 
 // GetGatewayRef returns the gateway reference for a given service namespace
 // Gateway namespace patterns:
-// - Centralized: single "platform-gateway" in istio-system (or configured namespace)
+// - Centralized: single "platform-gateway" in ionianshared (or configured namespace)
 // - Per-namespace: dedicated "<service>-gateway" namespace with Gateway named "<service>-gateway"
-//   Example: fhir service → fhir-gateway/fhir-gateway
 func (c GatewayConfig) GetGatewayRef(serviceNamespace string) (namespace, name string) {
 	if c.IsCentralized() {
 		return c.Namespace, c.Name
@@ -135,6 +154,9 @@ func NewProvider(conf *i2gw.ProviderConf) i2gw.Provider {
 			}
 			if name, ok := flags[GatewayNameFlag]; ok && name != "" {
 				gwConfig.Name = name
+			}
+			if owner, ok := flags[OwnerFlag]; ok && owner != "" {
+				gwConfig.Owner = owner
 			}
 		}
 	}
@@ -291,22 +313,55 @@ func (p *Provider) transformGatewaysForMode(gatewayResources *i2gw.GatewayResour
 }
 
 // updateHTTPRouteParentRefs updates HTTPRoute parentRefs from old gateway to new gateway
+// When owner is specified, creates two parentRefs: one for http and one for https-{owner}
 func (p *Provider) updateHTTPRouteParentRefs(gatewayResources *i2gw.GatewayResources, oldGw, newGw types.NamespacedName) {
 	for routeKey, route := range gatewayResources.HTTPRoutes {
 		updated := false
-		for i, parentRef := range route.Spec.ParentRefs {
+		var newParentRefs []gatewayv1.ParentReference
+		
+		for _, parentRef := range route.Spec.ParentRefs {
 			parentNs := route.Namespace
 			if parentRef.Namespace != nil {
 				parentNs = string(*parentRef.Namespace)
 			}
 			if parentNs == oldGw.Namespace && string(parentRef.Name) == oldGw.Name {
 				newNs := gatewayv1.Namespace(newGw.Namespace)
-				route.Spec.ParentRefs[i].Namespace = &newNs
-				route.Spec.ParentRefs[i].Name = gatewayv1.ObjectName(newGw.Name)
+				
+				if p.gatewayConfig.Owner != "" {
+					// Create two parentRefs with sectionNames: http and https-{owner}
+					httpSection := gatewayv1.SectionName("http")
+					httpsSection := gatewayv1.SectionName(fmt.Sprintf("https-%s", p.gatewayConfig.Owner))
+					
+					newParentRefs = append(newParentRefs,
+						gatewayv1.ParentReference{
+							Group:       parentRef.Group,
+							Kind:        parentRef.Kind,
+							Namespace:   &newNs,
+							Name:        gatewayv1.ObjectName(newGw.Name),
+							SectionName: &httpSection,
+						},
+						gatewayv1.ParentReference{
+							Group:       parentRef.Group,
+							Kind:        parentRef.Kind,
+							Namespace:   &newNs,
+							Name:        gatewayv1.ObjectName(newGw.Name),
+							SectionName: &httpsSection,
+						},
+					)
+				} else {
+					// No owner specified, just update namespace and name
+					updatedRef := parentRef
+					updatedRef.Namespace = &newNs
+					updatedRef.Name = gatewayv1.ObjectName(newGw.Name)
+					newParentRefs = append(newParentRefs, updatedRef)
+				}
 				updated = true
+			} else {
+				newParentRefs = append(newParentRefs, parentRef)
 			}
 		}
 		if updated {
+			route.Spec.ParentRefs = newParentRefs
 			gatewayResources.HTTPRoutes[routeKey] = route
 		}
 	}

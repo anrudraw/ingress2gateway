@@ -221,25 +221,13 @@ func buildBackendTLSPolicy(name, namespace, serviceName string, config *backendT
 
 	// Add CA certificate reference if proxy-ssl-secret is specified
 	if config.sslSecret != "" {
-		// proxy-ssl-secret format is "namespace/secretName" or just "secretName"
-		secretParts := strings.Split(config.sslSecret, "/")
-		var secretName string
-		if len(secretParts) == 2 {
-			// Cross-namespace reference - secretParts[0] is namespace, secretParts[1] is name
-			// Note: This may require a ReferenceGrant
-			secretName = secretParts[1]
-		} else {
-			secretName = config.sslSecret
-		}
-
-		// Use ConfigMap reference for CA certs (common pattern)
-		// In practice, users may need to convert their Secret to a ConfigMap
-		// containing the CA certificate
+		caConfigMapName := "ca-ame-nginx"
+		
 		policy.Spec.Validation.CACertificateRefs = []gatewayv1.LocalObjectReference{
 			{
 				Group: "",
 				Kind:  "ConfigMap",
-				Name:  gatewayv1.ObjectName(secretName + "-ca"),
+				Name:  gatewayv1.ObjectName(caConfigMapName),
 			},
 		}
 	} else {
